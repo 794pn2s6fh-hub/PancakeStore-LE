@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/majd/ipatool/v2/internal/storeauth"
 )
@@ -16,8 +15,11 @@ const anisetteKeychainKey = "anisette-v4"
 func (t *appstore) nativeLogin(input LoginInput) (LoginOutput, error) {
 	t.authStateMu.Lock()
 	defer t.authStateMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	// First-run Anisette setup extracts Apple runtime assets from a large remote
+	// IPSW. On slower connections this can take several minutes. Keep the login
+	// context alive for the whole preparation; individual HTTP requests remain
+	// bounded by their own deadlines and retry limits.
+	ctx := context.Background()
 	fmt.Println("[ipatool] nativeLogin: starting")
 	if len(t.anisetteState) == 0 && t.keychain != nil {
 		t.anisetteState, _ = t.keychain.Get(anisetteKeychainKey)
@@ -54,7 +56,7 @@ func (t *appstore) nativeLogin(input LoginInput) (LoginOutput, error) {
 			return t.legacyLogin(input)
 		}
 	}
-	fmt.Println("[ipatool] nativeLogin: preparing Anisette provisioning")
+	fmt.Println("[ipatool] nativeLogin: preparing Anisette provisioning (first run may take several minutes)")
 	headers, state, err := storeauth.AnisetteHeaders(ctx, t.authHTTP, t.anisetteState)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("prepare Apple authentication: %w", err)
