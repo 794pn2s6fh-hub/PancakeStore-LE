@@ -47,7 +47,7 @@ var _ = Describe("Buffered remote ranges", func() {
 		mu.Lock()
 		count := len(requests)
 		mu.Unlock()
-		Expect(count).To(Equal(5))
+		Expect(count).To(Equal(2))
 		Expect(len(remote.cache)).To(BeNumerically("<=", remoteReadAheadSize))
 	})
 	It("keeps sparse metadata requests exact", func() {
@@ -139,7 +139,7 @@ var _ = Describe("Interrupted remote responses", func() {
 			case 1:
 				return &http.Response{StatusCode: http.StatusPartialContent, Header: http.Header{"Content-Range": []string{"bytes 0-3/1048576"}}, Body: io.NopCloser(strings.NewReader("abcd"))}, nil
 			case 2:
-				return &http.Response{StatusCode: http.StatusPartialContent, Header: http.Header{"Content-Range": []string{fmt.Sprintf("bytes 4-%d/1048576", 4+remoteReadAheadSize-1)}}, Body: io.NopCloser(strings.NewReader("efgh"))}, nil
+				return &http.Response{StatusCode: http.StatusPartialContent, Header: http.Header{"Content-Range": []string{fmt.Sprintf("bytes 4-%d/1048576", min(int64(4+remoteReadAheadSize-1), int64((1<<20)-1)))}}, Body: io.NopCloser(strings.NewReader("efgh"))}, nil
 			default:
 				return nil, errors.New("connection interrupted")
 			}

@@ -31,6 +31,7 @@ func extractFairPlayKext(archive *zip.Reader, destination string) error {
 		return err
 	}
 
+	fmt.Printf("[ipatool/assets] reading pinned kernel collection from restore image (%d MiB compressed)\n", kernelCacheCompressedSize>>20)
 	reader, err := entry.Open()
 	if err != nil {
 		return fmt.Errorf("open pinned kernel collection: %w", err)
@@ -43,6 +44,7 @@ func extractFairPlayKext(archive *zip.Reader, destination string) error {
 		return fmt.Errorf("read pinned kernel collection: %w", errors.Join(readErr, closeErr))
 	}
 
+	fmt.Printf("[ipatool/assets] pinned kernel collection read complete (%d MiB); decompressing\n", len(data)>>20)
 	if len(data) != kernelCacheArchiveSize {
 		return fmt.Errorf("pinned kernel collection has size %d, expected %d", len(data), kernelCacheArchiveSize)
 	}

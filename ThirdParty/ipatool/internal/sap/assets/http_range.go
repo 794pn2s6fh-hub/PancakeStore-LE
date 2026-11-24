@@ -15,10 +15,13 @@ import (
 )
 
 const (
-	remoteReadAttempts        = 5
-	restoreImageUserAgent     = "Mozilla/5.0"
-	remoteSmallReadSize       = 32 << 10
-	remoteReadAheadSize       = 256 << 10
+	remoteReadAttempts    = 5
+	restoreImageUserAgent = "Mozilla/5.0"
+	remoteSmallReadSize   = 32 << 10
+	// Deflate readers used by archive/zip request small sequential chunks. A larger
+	// read-ahead block avoids thousands of small HTTP Range requests while
+	// extracting the pinned kernel collection from the remote IPSW.
+	remoteReadAheadSize       = 8 << 20
 	remoteRangeRequestTimeout = 45 * time.Second
 	remoteRetryInitialDelay   = 500 * time.Millisecond
 	remoteRetryMaximumDelay   = 4 * time.Second
