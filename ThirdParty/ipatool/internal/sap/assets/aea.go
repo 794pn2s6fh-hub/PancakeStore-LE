@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-compressions/lzfse"
 )
@@ -42,6 +43,7 @@ const (
 	aeaDecodedSegmentCacheCount = 64
 	maxAEAAuthDataSize          = 1 << 20
 	maxFCSKeySize               = 64 << 10
+	fcsKeyRequestTimeout        = 30 * time.Second
 )
 
 type aeaHeader struct {
@@ -245,6 +247,116 @@ func parseAEAMetadata(data []byte) (map[string][]byte, error) {
 	return metadata, nil
 }
 
+// downloadAppleFCSKey retrieves the public restore-image FCS key. Unlike the
+// IPSW byte-range reader, this endpoint used to be called only once; a single
+// transient WKMS/CDN timeout therefore aborted first-run Anisette preparation.
+func downloadAppleFCSKey(ctx context.Context, client *http.Client, keyURL string) ([]byte, error) {
+	var lastErr error
+
+	for attempt := 0; attempt < remoteReadAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("download Apple FCS key: %w", err)
+		}
+
+		requestContext, cancel := context.WithTimeout(ctx, fcsKeyRequestTimeout)
+		request, err := http.NewRequestWithContext(requestContext, http.MethodGet, keyURL, nil)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("create Apple FCS key request: %w", err)
+		}
+		request.Header.Set("User-Agent", restoreImageUserAgent)
+
+		requestClient := client
+		var fallbackTransport *http.Transport
+		if attempt > 0 {
+			// The first request uses the configured transport (HTTP/2 when
+			// available). After a stalled WKMS HTTP/2 exchange, retry over a new
+			// HTTP/1.1 connection so the same multiplexed connection is not reused.
+			if transport, ok := client.Transport.(*http.Transport); ok {
+				fallbackTransport = transport.Clone()
+				fallbackTransport.ForceAttemptHTTP2 = false
+				fallbackTransport.DisableKeepAlives = true
+				copyClient := *client
+				copyClient.Transport = fallbackTransport
+				requestClient = &copyClient
+			}
+		}
+
+		response, requestErr := requestClient.Do(request)
+		if requestErr != nil {
+			cancel()
+			if fallbackTransport != nil {
+				fallbackTransport.CloseIdleConnections()
+			}
+			lastErr = requestErr
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("download Apple FCS key: %w", ctx.Err())
+			}
+			client.CloseIdleConnections()
+			if attempt+1 < remoteReadAttempts {
+				fmt.Printf("[ipatool/assets] retrying Apple FCS key request after network error attempt=%d/%d (fresh HTTP/1.1 connection on retry): %v\n", attempt+1, remoteReadAttempts, requestErr)
+				if err := waitRemoteRetry(ctx, attempt, 0); err != nil {
+					return nil, fmt.Errorf("download Apple FCS key: %w", err)
+				}
+				continue
+			}
+			break
+		}
+
+		if response.StatusCode != http.StatusOK {
+			status := response.Status
+			retryAfter := parseRemoteRetryAfter(response.Header.Get("Retry-After"))
+			_ = response.Body.Close()
+			cancel()
+			if fallbackTransport != nil {
+				fallbackTransport.CloseIdleConnections()
+			}
+			lastErr = fmt.Errorf("server returned %s", status)
+			if !retryableRemoteStatus(response.StatusCode) || attempt+1 == remoteReadAttempts {
+				return nil, fmt.Errorf("download Apple FCS key: %w", lastErr)
+			}
+			fmt.Printf("[ipatool/assets] retrying Apple FCS key request after HTTP %s attempt=%d/%d\n", status, attempt+1, remoteReadAttempts)
+			client.CloseIdleConnections()
+			if err := waitRemoteRetry(ctx, attempt, retryAfter); err != nil {
+				return nil, fmt.Errorf("download Apple FCS key: %w", err)
+			}
+			continue
+		}
+
+		pemData, readErr := io.ReadAll(io.LimitReader(response.Body, maxFCSKeySize+1))
+		closeErr := response.Body.Close()
+		cancel()
+		if fallbackTransport != nil {
+			fallbackTransport.CloseIdleConnections()
+		}
+		if readErr != nil || closeErr != nil {
+			lastErr = errors.Join(readErr, closeErr)
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("read Apple FCS key: %w", ctx.Err())
+			}
+			if attempt+1 == remoteReadAttempts {
+				break
+			}
+			fmt.Printf("[ipatool/assets] retrying Apple FCS key body after read error attempt=%d/%d: %v\n", attempt+1, remoteReadAttempts, lastErr)
+			client.CloseIdleConnections()
+			if err := waitRemoteRetry(ctx, attempt, 0); err != nil {
+				return nil, fmt.Errorf("read Apple FCS key: %w", err)
+			}
+			continue
+		}
+
+		if len(pemData) > maxFCSKeySize {
+			return nil, errors.New("apple FCS key response is too large")
+		}
+		return pemData, nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("Apple FCS key request failed")
+	}
+	return nil, fmt.Errorf("download Apple FCS key after %d attempts: %w", remoteReadAttempts, lastErr)
+}
+
 // resolveAEASymmetricKey downloads the Apple-published FCS P-256 private key
 // identified by the AEA metadata. That key is the HPKE recipient key for this
 // image's wrapped symmetric key; the unwrapped key is then used to derive the
@@ -261,28 +373,9 @@ func resolveAEASymmetricKey(ctx context.Context, client *http.Client, metadata m
 		return nil, fmt.Errorf("invalid Apple FCS key URL %q", keyURLData)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, keyURL.String(), nil)
+	pemData, err := downloadAppleFCSKey(ctx, client, keyURL.String())
 	if err != nil {
-		return nil, fmt.Errorf("create Apple FCS key request: %w", err)
-	}
-
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("download Apple FCS key: %w", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download Apple FCS key: server returned %s", response.Status)
-	}
-
-	pemData, err := io.ReadAll(io.LimitReader(response.Body, maxFCSKeySize+1))
-	if err != nil {
-		return nil, fmt.Errorf("read Apple FCS key: %w", err)
-	}
-
-	if len(pemData) > maxFCSKeySize {
-		return nil, errors.New("apple FCS key response is too large")
+		return nil, err
 	}
 
 	block, _ := pem.Decode(pemData)
