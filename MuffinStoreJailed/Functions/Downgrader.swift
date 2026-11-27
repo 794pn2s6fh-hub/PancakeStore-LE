@@ -246,9 +246,10 @@ func getAllAppVersionIdsFromServer(appId: String, ipaTool: IPATool) {
         }
 
         DispatchQueue.main.async {
-            // The history lookup is complete. Keep the UI out of downgrade
-            // state while the user chooses an item from the version picker.
-            store.isGettingVersions = false
+            // Keep the Getting Versions state visible while the user chooses
+            // a concrete version. The actual downgrade starts only from the
+            // selected action's handler in downgradeAppToVersion(...).
+            store.isGettingVersions = true
             store.isSelectingVersion = true
             let isiPad = UIDevice.current.userInterfaceIdiom == .pad
             let alert = UIAlertController(
@@ -298,7 +299,9 @@ func downgradeApp(appId: String, ipaTool: IPATool) {
                 return
             }
 
-            store.isGettingVersions = false
+            // Keep the same button status through both the source selector
+            // and the version picker. It changes only after a version is chosen.
+            store.isGettingVersions = true
             store.isSelectingVersion = true
 
             let isiPad = UIDevice.current.userInterfaceIdiom == .pad
