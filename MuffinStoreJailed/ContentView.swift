@@ -19,6 +19,7 @@ final class StoreData: ObservableObject {
     @Published var isAuthenticating = false
     @Published var isDowngrading = false
     @Published var isGettingVersions = false
+    @Published var isSelectingVersion = false
     @Published var downloadedIPAURL: URL?
 }
 
@@ -38,6 +39,28 @@ struct ContentView: View {
     @State private var showSettings = false
     
     let device = UIDevice.current
+
+    // Use a real localized value with a readable fallback. This also prevents
+    // an untranslated localization key from appearing in the button label.
+    private var gettingVersionsStatus: String {
+        NSLocalizedString(
+            "status.gettingVersions",
+            tableName: "Localizable",
+            bundle: .main,
+            value: "Getting Versions…",
+            comment: "Shown while loading available App Store versions"
+        )
+    }
+
+    private var downgradingStatus: String {
+        NSLocalizedString(
+            "status.downgrading",
+            tableName: "Localizable",
+            bundle: .main,
+            value: "Downgrading Application…",
+            comment: "Shown after a specific app version has been selected"
+        )
+    }
     
     var body: some View {
         NavigationStack {
@@ -106,11 +129,7 @@ struct ContentView: View {
                         } else {
                             HStack(spacing: 12) {
                                 ProgressView()
-                                if store.isGettingVersions {
-                                    Text("status.gettingVersions")
-                                } else {
-                                    Text("status.downgrading")
-                                }
+                                Text(verbatim: downgradingStatus)
                             }
                         }
                     }
@@ -212,7 +231,7 @@ struct ContentView: View {
 
                     if store.isLoggedIn && !store.hasServedApp {
                         Button {
-                            guard !store.isDowngrading else { return }
+                            guard !store.isDowngrading && !store.isGettingVersions && !store.isSelectingVersion else { return }
                             var appLinkParsed = storeURL
                             appLinkParsed = appLinkParsed.components(separatedBy: "id").last ?? ""
                             
@@ -233,24 +252,25 @@ struct ContentView: View {
                                 )
                                 return
                             }
-                            store.isDowngrading = true
+                            // Version lookup is not a downgrade yet. Keep the
+                            // app on the entry screen until the user chooses a version.
+                            store.isDowngrading = false
                             store.isGettingVersions = true
+                            store.isSelectingVersion = false
                             downgradeApp(appId: appLinkParsed, ipaTool: tool)
                         } label: {
-                            if store.isDowngrading {
-                                if store.isGettingVersions {
-                                    Text("status.gettingVersions")
-                                        .font(.body.weight(.medium))
-                                } else {
-                                    Text(String(localized: "action.downgrading"))
-                                        .font(.body.weight(.medium))
-                                }
+                            if store.isGettingVersions {
+                                Text(verbatim: gettingVersionsStatus)
+                                    .font(.body.weight(.medium))
+                            } else if store.isDowngrading {
+                                Text(verbatim: downgradingStatus)
+                                    .font(.body.weight(.medium))
                             } else {
                                 ButtonLabel(text: String(localized: "action.downgradeApp"), icon: "arrow.down")
                             }
                         }
                         .buttonStyle(FancyButtonStyle())
-                        .disabled(storeURL.isEmpty || store.isDowngrading)
+                        .disabled(storeURL.isEmpty || store.isDowngrading || store.isGettingVersions || store.isSelectingVersion)
                     }
                     
                     if store.isDowngrading {
