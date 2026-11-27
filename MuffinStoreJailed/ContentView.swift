@@ -17,6 +17,9 @@ final class StoreData: ObservableObject {
     @Published var sent2FA = false
     @Published var isLoggedIn = false
     @Published var isAuthenticating = false
+    @Published var isDowngrading = false
+    @Published var isGettingVersions = false
+    @Published var downloadedIPAURL: URL?
 }
 
 struct ContentView: View {
@@ -29,7 +32,7 @@ struct ContentView: View {
     @State private var accountName = ""
     
     @State private var storeURL = ""
-    @State private var isDowngrading = false
+    @State private var isExportingFromOpenAppLongPress = false
     
     @State private var shownWelcome = false
     @State private var showSettings = false
@@ -79,7 +82,7 @@ struct ContentView: View {
                 }
 
                 // on login
-                if store.isLoggedIn && !isDowngrading {
+                if store.isLoggedIn && !store.isDowngrading {
                     Section {
                         TextField("downgrade.placeholder.link", text: $storeURL)
                             .autocorrectionDisabled()
@@ -92,7 +95,7 @@ struct ContentView: View {
                 }
 
                 // while downgrading
-                if isDowngrading {
+                if store.isDowngrading {
                     Section {
                         if store.hasServedApp {
                             HStack(spacing: 12) {
@@ -103,7 +106,11 @@ struct ContentView: View {
                         } else {
                             HStack(spacing: 12) {
                                 ProgressView()
-                                Text("status.downgrading")
+                                if store.isGettingVersions {
+                                    Text("status.gettingVersions")
+                                } else {
+                                    Text("status.downgrading")
+                                }
                             }
                         }
                     }
@@ -205,7 +212,7 @@ struct ContentView: View {
 
                     if store.isLoggedIn && !store.hasServedApp {
                         Button {
-                            guard !isDowngrading else { return }
+                            guard !store.isDowngrading else { return }
                             var appLinkParsed = storeURL
                             appLinkParsed = appLinkParsed.components(separatedBy: "id").last ?? ""
                             
@@ -219,31 +226,61 @@ struct ContentView: View {
                             print("App ID: \(appLinkParsed)")
                             // Let SwiftUI render the existing FancyButtonStyle disabled state
                             // before the synchronous version lookup begins.
-                            isDowngrading = true
-                            DispatchQueue.main.async {
-                                isDowngrading = downgradeApp(appId: appLinkParsed, ipaTool: ipaTool!)
+                            guard let tool = ipaTool else {
+                                showAlert(
+                                    title: String(localized: "alert.error.title"),
+                                    message: "The native Store session is not ready. Please sign in again."
+                                )
+                                return
                             }
+                            store.isDowngrading = true
+                            store.isGettingVersions = true
+                            downgradeApp(appId: appLinkParsed, ipaTool: tool)
                         } label: {
-                            if isDowngrading {
-                                Text(String(localized: "action.downgrading"))
-                                    .font(.body.weight(.medium))
+                            if store.isDowngrading {
+                                if store.isGettingVersions {
+                                    Text("status.gettingVersions")
+                                        .font(.body.weight(.medium))
+                                } else {
+                                    Text(String(localized: "action.downgrading"))
+                                        .font(.body.weight(.medium))
+                                }
                             } else {
                                 ButtonLabel(text: String(localized: "action.downgradeApp"), icon: "arrow.down")
                             }
                         }
                         .buttonStyle(FancyButtonStyle())
-                        .disabled(storeURL.isEmpty || isDowngrading)
+                        .disabled(storeURL.isEmpty || store.isDowngrading)
                     }
                     
-                    if isDowngrading {
+                    if store.isDowngrading {
                         VStack {
                             Button {
+                                // A long press is reserved for IPA export. Do not also
+                                // launch the app when SwiftUI completes the button touch.
+                                if isExportingFromOpenAppLongPress {
+                                    isExportingFromOpenAppLongPress = false
+                                    return
+                                }
                                 LSApplicationWorkspace.default().openApplication(withBundleID: store.appBID)
                             } label: {
                                 ButtonLabel(text: String(localized: "action.openApp"), icon: "arrow.up.right.square")
                             }
                             .buttonStyle(FancyButtonStyle())
                             .disabled(!store.hasServedApp)
+                            .onLongPressGesture(minimumDuration: 0.5, pressing: { isPressing in
+                                // If no long press was recognized, this is just a normal
+                                // tap. If it was recognized, keep the flag until Button's
+                                // release action has had a chance to consume it.
+                                guard !isPressing else { return }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                    isExportingFromOpenAppLongPress = false
+                                }
+                            }, perform: {
+                                guard store.hasServedApp else { return }
+                                isExportingFromOpenAppLongPress = true
+                                exportDownloadedIPA()
+                            })
                         }
                     }
                 }
@@ -330,6 +367,36 @@ struct ContentView: View {
                     print("Successfully received app link! \(appLink)")
                 }
             }
+        }
+    }
+
+    private func exportDownloadedIPA() {
+        guard let ipaURL = store.downloadedIPAURL,
+              fm.fileExists(atPath: ipaURL.path) else {
+            showAlert(
+                title: String(localized: "alert.error.title"),
+                message: "The downloaded IPA is no longer available. Please run the downgrade again."
+            )
+            return
+        }
+
+        let safeBundleID = store.appBID.replacingOccurrences(of: "/", with: "_")
+        let safeVersion = store.appVersion.replacingOccurrences(of: "/", with: "_")
+        let exportURL = fm.temporaryDirectory.appendingPathComponent("\(safeBundleID)-\(safeVersion).ipa")
+
+        do {
+            if fm.fileExists(atPath: exportURL.path) {
+                try fm.removeItem(at: exportURL)
+            }
+            try fm.copyItem(at: ipaURL, to: exportURL)
+            Haptic.shared.play(.soft)
+            presentShareSheet(with: exportURL)
+        } catch {
+            print("[Export] failed to prepare IPA for sharing: \(error.localizedDescription)")
+            showAlert(
+                title: String(localized: "alert.error.title"),
+                message: error.localizedDescription
+            )
         }
     }
 }
