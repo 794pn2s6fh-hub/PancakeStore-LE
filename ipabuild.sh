@@ -44,11 +44,19 @@ xcodebuild -project "$WORKING_LOCATION/$APPLICATION_NAME.xcodeproj" \
     -derivedDataPath "$WORKING_LOCATION/build/DerivedDataApp" \
     -destination 'generic/platform=iOS' \
     clean build \
-    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
+    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO" MARKETING_VERSION=1.1 INFOPLIST_KEY_CFBundleShortVersionString=1.1
 
 DD_APP_PATH="$WORKING_LOCATION/build/DerivedDataApp/Build/Products/Debug-iphoneos/$APPLICATION_NAME.app"
 TARGET_APP="$WORKING_LOCATION/build/$APPLICATION_NAME.app"
 cp -r "$DD_APP_PATH" "$TARGET_APP"
+
+EXPECTED_SHORT_VERSION="1.1"
+ACTUAL_SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$TARGET_APP/Info.plist")
+if [ "$ACTUAL_SHORT_VERSION" != "$EXPECTED_SHORT_VERSION" ]; then
+    echo "[!] Wrong app version in built Info.plist: expected $EXPECTED_SHORT_VERSION, got $ACTUAL_SHORT_VERSION" >&2
+    exit 1
+fi
+echo "[*] Verified PancakeStore version $ACTUAL_SHORT_VERSION"
 else
 xcodebuild -project "$WORKING_LOCATION/$APPLICATION_NAME.xcodeproj" \
     -scheme "$APPLICATION_NAME" \
@@ -56,11 +64,19 @@ xcodebuild -project "$WORKING_LOCATION/$APPLICATION_NAME.xcodeproj" \
     -derivedDataPath "$WORKING_LOCATION/build/DerivedDataApp" \
     -destination 'generic/platform=iOS' \
     clean build \
-    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
+    CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO" MARKETING_VERSION=1.1 INFOPLIST_KEY_CFBundleShortVersionString=1.1
 
 DD_APP_PATH="$WORKING_LOCATION/build/DerivedDataApp/Build/Products/Release-iphoneos/$APPLICATION_NAME.app"
 TARGET_APP="$WORKING_LOCATION/build/$APPLICATION_NAME.app"
 cp -r "$DD_APP_PATH" "$TARGET_APP"
+
+EXPECTED_SHORT_VERSION="1.1"
+ACTUAL_SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$TARGET_APP/Info.plist")
+if [ "$ACTUAL_SHORT_VERSION" != "$EXPECTED_SHORT_VERSION" ]; then
+    echo "[!] Wrong app version in built Info.plist: expected $EXPECTED_SHORT_VERSION, got $ACTUAL_SHORT_VERSION" >&2
+    exit 1
+fi
+echo "[*] Verified PancakeStore version $ACTUAL_SHORT_VERSION"
 fi
 
 echo "[*] Stripping signature..."
