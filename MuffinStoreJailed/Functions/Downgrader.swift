@@ -25,8 +25,10 @@ struct SafariWebView: UIViewControllerRepresentable {
 
 func downgradeAppToVersion(appId: String, versionId: String, ipaTool: IPATool) {
     let data = StoreData.shared
+    // This is the first point at which an actual version has been selected.
     data.isDowngrading = true
     data.isGettingVersions = false
+    data.isSelectingVersion = false
     data.hasServedApp = false
     data.downloadedIPAURL = nil
 
@@ -126,6 +128,7 @@ func downgradeAppToVersion(appId: String, versionId: String, ipaTool: IPATool) {
                     DispatchQueue.main.async {
                         data.hasServedApp = true
                         data.isGettingVersions = false
+                        data.isSelectingVersion = false
                         // Keep the post-install state active so the existing
                         // success panel and Open App / long-press Export controls remain visible.
                     }
@@ -146,6 +149,7 @@ func downgradeAppToVersion(appId: String, versionId: String, ipaTool: IPATool) {
                     DispatchQueue.main.async {
                         data.isDowngrading = false
                         data.isGettingVersions = false
+                        data.isSelectingVersion = false
                         if backgroundTask != .invalid {
                             UIApplication.shared.endBackgroundTask(backgroundTask)
                         }
@@ -176,6 +180,7 @@ func downgradeAppToVersion(appId: String, versionId: String, ipaTool: IPATool) {
         } catch {
             StoreData.shared.isDowngrading = false
             StoreData.shared.isGettingVersions = false
+            StoreData.shared.isSelectingVersion = false
             print("[Install] download or preparation failed: \(error.localizedDescription)")
             showAlert(title: String(localized: "alert.error.title"), message: error.localizedDescription)
         }
@@ -197,6 +202,7 @@ func promptForVersionId(appId: String, versionIds: [String], ipaTool: IPATool) {
     alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel, handler: { _ in
         StoreData.shared.isDowngrading = false
         StoreData.shared.isGettingVersions = false
+        StoreData.shared.isSelectingVersion = false
     }))
     UIApplication.shared.windows.first?.rootViewController?.present(alert, animated: true, completion: nil)
 }
@@ -210,6 +216,7 @@ func showAlert(title: String, message: String) {
 func getAllAppVersionIdsFromServer(appId: String, ipaTool: IPATool) {
     let store = StoreData.shared
     store.isGettingVersions = true
+    store.isSelectingVersion = false
 
     // Keep the original Server history lookup and action-sheet flow.
     let serverURL = "https://apis.bilin.eu.org/history/"
@@ -220,6 +227,7 @@ func getAllAppVersionIdsFromServer(appId: String, ipaTool: IPATool) {
             DispatchQueue.main.async {
                 store.isGettingVersions = false
                 store.isDowngrading = false
+                store.isSelectingVersion = false
                 showAlert(title: String(localized: "alert.error.title"), message: error.localizedDescription)
             }
             return
@@ -231,17 +239,17 @@ func getAllAppVersionIdsFromServer(appId: String, ipaTool: IPATool) {
             DispatchQueue.main.async {
                 store.isGettingVersions = false
                 store.isDowngrading = false
+                store.isSelectingVersion = false
                 showAlert(title: String(localized: "alert.error.title"), message: String(localized: "alert.version.none"))
             }
             return
         }
 
         DispatchQueue.main.async {
-            // Keep the downgrade flow active while the version picker is open.
-            // This is how the original flow behaved and prevents SwiftUI from
-            // rebuilding the entry screen between fetching and selecting.
+            // The history lookup is complete. Keep the UI out of downgrade
+            // state while the user chooses an item from the version picker.
             store.isGettingVersions = false
-
+            store.isSelectingVersion = true
             let isiPad = UIDevice.current.userInterfaceIdiom == .pad
             let alert = UIAlertController(
                 title: String(localized: "alert.version.select.title"),
@@ -256,6 +264,7 @@ func getAllAppVersionIdsFromServer(appId: String, ipaTool: IPATool) {
             alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel, handler: { _ in
                 store.isDowngrading = false
                 store.isGettingVersions = false
+                store.isSelectingVersion = false
             }))
             UIApplication.shared.windows.first?.rootViewController?.present(alert, animated: true, completion: nil)
         }
@@ -265,8 +274,11 @@ func getAllAppVersionIdsFromServer(appId: String, ipaTool: IPATool) {
 
 func downgradeApp(appId: String, ipaTool: IPATool) {
     let store = StoreData.shared
-    store.isDowngrading = true
+    // Retrieving the list is not the downgrade itself. The real downgrade
+    // state starts in downgradeAppToVersion after the user makes a selection.
+    store.isDowngrading = false
     store.isGettingVersions = true
+    store.isSelectingVersion = false
 
     // The ipatool bridge call is synchronous. Keep it off the main queue so
     // SwiftUI can display Getting Versions… while Store history is requested.
@@ -274,10 +286,10 @@ func downgradeApp(appId: String, ipaTool: IPATool) {
         let versionIds = ipaTool.getVersionIDList(appId: appId)
 
         DispatchQueue.main.async {
-            store.isGettingVersions = false
-
             guard !versionIds.isEmpty else {
+                store.isGettingVersions = false
                 store.isDowngrading = false
+                store.isSelectingVersion = false
                 print("No version ids were found, aborting...")
                 Alertinator.shared.alert(
                     title: String(localized: "alert.downgrade.failed.title"),
@@ -285,6 +297,9 @@ func downgradeApp(appId: String, ipaTool: IPATool) {
                 )
                 return
             }
+
+            store.isGettingVersions = false
+            store.isSelectingVersion = true
 
             let isiPad = UIDevice.current.userInterfaceIdiom == .pad
             let alert = UIAlertController(
@@ -301,6 +316,7 @@ func downgradeApp(appId: String, ipaTool: IPATool) {
             alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel, handler: { _ in
                 store.isDowngrading = false
                 store.isGettingVersions = false
+                store.isSelectingVersion = false
             }))
             UIApplication.shared.windows.first?.rootViewController?.present(alert, animated: true, completion: nil)
         }
