@@ -260,8 +260,12 @@ struct ContentView: View {
                             downgradeApp(appId: appLinkParsed, ipaTool: tool)
                         } label: {
                             if store.isGettingVersions {
-                                Text(verbatim: gettingVersionsStatus)
-                                    .font(.body.weight(.medium))
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text(verbatim: gettingVersionsStatus)
+                                        .font(.body.weight(.medium))
+                                }
                             } else if store.isDowngrading {
                                 Text(verbatim: downgradingStatus)
                                     .font(.body.weight(.medium))
