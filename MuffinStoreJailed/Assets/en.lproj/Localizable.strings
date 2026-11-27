@@ -16,8 +16,8 @@
 "section.downgrade.footer" = "Not all apps are eligible for downgrading. Make sure that you've purchased the app in the App Store and that it is not currently installed before continuing.";
 
 "status.downgradeSuccessful" = "Downgraded Application!";
-"status.downgrading" = "Downgrading Application...";
-
+"status.downgrading" = "Downgrading Application…";
+"status.gettingVersions" = "Getting Versions…";
 "action.copy" = "Copy";
 "info.label.bundleId" = "Bundle ID";
 "info.label.targetVersion" = "Version";
@@ -67,6 +67,7 @@
 
 "action.copyOutput" = "Copy Output";
 "action.exportLogs" = "Export Logs";
+"action.exportIPA" = "Export IPA";
 
 "alert.version.enter.title" = "Enter version ID";
 "alert.version.enter.message" = "Select a version to downgrade to";
