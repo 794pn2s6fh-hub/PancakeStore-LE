@@ -135,3 +135,64 @@ func TestListVersionsWithNativeRefreshReturnsRetryError(t *testing.T) {
 		t.Fatalf("list calls = %d; want 2", calls)
 	}
 }
+
+func TestListVersionsWithNativeRefreshRecoversAMDSynchronizationOnce(t *testing.T) {
+	original := appstore.Account{Email: "apple@example.test", Password: "stored-password"}
+	refreshed := appstore.Account{
+		Email: original.Email, Password: original.Password, PasswordToken: "fresh-token",
+		DirectoryServicesID: "123456789012", StoreFront: "143441-1,34",
+	}
+	listCalls, loginCalls := 0, 0
+	versions, err := listVersionsWithNativeRefresh(
+		original,
+		func(account appstore.Account) (appstore.ListVersionsOutput, error) {
+			listCalls++
+			if listCalls == 1 {
+				return appstore.ListVersionsOutput{}, appstore.ErrStoreAMDSynchronizationRequired
+			}
+			if account.PasswordToken != refreshed.PasswordToken {
+				t.Fatalf("retry used token %q; want refreshed token", account.PasswordToken)
+			}
+			return appstore.ListVersionsOutput{ExternalVersionIdentifiers: []string{"100"}, LatestExternalVersionID: "100"}, nil
+		},
+		func(input appstore.LoginInput) (appstore.LoginOutput, error) {
+			loginCalls++
+			if input.Email != original.Email || input.Password != original.Password {
+				t.Fatal("login did not use saved Apple credentials")
+			}
+			return appstore.LoginOutput{Account: refreshed}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("listVersionsWithNativeRefresh() error = %v", err)
+	}
+	if listCalls != 2 || loginCalls != 1 {
+		t.Fatalf("list calls = %d, login calls = %d; want 2 and 1", listCalls, loginCalls)
+	}
+	if versions.LatestExternalVersionID != "100" {
+		t.Fatalf("unexpected version result: %#v", versions)
+	}
+}
+
+func TestListVersionsWithNativeRefreshStopsAfterOneAMDSynchronizationRetry(t *testing.T) {
+	listCalls, loginCalls := 0, 0
+	_, err := listVersionsWithNativeRefresh(
+		appstore.Account{Email: "apple@example.test", Password: "stored-password"},
+		func(appstore.Account) (appstore.ListVersionsOutput, error) {
+			listCalls++
+			return appstore.ListVersionsOutput{}, appstore.ErrStoreAMDSynchronizationRequired
+		},
+		func(appstore.LoginInput) (appstore.LoginOutput, error) {
+			loginCalls++
+			return appstore.LoginOutput{Account: appstore.Account{
+				PasswordToken: "fresh-token", DirectoryServicesID: "123456789012", StoreFront: "143441-1,34",
+			}}, nil
+		},
+	)
+	if !errors.Is(err, appstore.ErrStoreAMDSynchronizationRequired) {
+		t.Fatalf("error = %v; want AMD synchronization error after retry", err)
+	}
+	if listCalls != 2 || loginCalls != 1 {
+		t.Fatalf("list calls = %d, login calls = %d; want 2 and 1", listCalls, loginCalls)
+	}
+}

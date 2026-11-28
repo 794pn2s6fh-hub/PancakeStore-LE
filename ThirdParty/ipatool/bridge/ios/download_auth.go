@@ -7,20 +7,19 @@ import (
 	"github.com/majd/ipatool/v2/pkg/appstore"
 )
 
-// downloadWithNativeRefresh mirrors ipatool's CLI retry policy for the native
-// bridge. It refreshes a rejected password token once, then retries the exact
-// same version download with the new account state.
+// downloadWithNativeRefresh refreshes a rejected Store token or AMD machine
+// session once, then retries the exact same version download.
 func downloadWithNativeRefresh(
 	account appstore.Account,
 	download func(appstore.Account) (appstore.DownloadOutput, error),
 	login func(appstore.LoginInput) (appstore.LoginOutput, error),
 ) (appstore.DownloadOutput, appstore.Account, error) {
 	output, err := download(account)
-	if err == nil || !errors.Is(err, appstore.ErrPasswordTokenExpired) {
+	if err == nil || !requiresNativeStoreRefresh(err) {
 		return output, account, err
 	}
 
-	refreshed, err := refreshNativeAccount(account, login)
+	refreshed, err := refreshNativeAccount(account, login, err)
 	if err != nil {
 		return appstore.DownloadOutput{}, account, err
 	}
@@ -41,11 +40,11 @@ func purchaseWithNativeRefresh(
 	if err == nil || errors.Is(err, appstore.ErrLicenseAlreadyExists) {
 		return account, nil
 	}
-	if !errors.Is(err, appstore.ErrPasswordTokenExpired) {
+	if !requiresNativeStoreRefresh(err) {
 		return account, err
 	}
 
-	refreshed, refreshErr := refreshNativeAccount(account, login)
+	refreshed, refreshErr := refreshNativeAccount(account, login, err)
 	if refreshErr != nil {
 		return account, refreshErr
 	}
@@ -61,12 +60,13 @@ func purchaseWithNativeRefresh(
 func refreshNativeAccount(
 	account appstore.Account,
 	login func(appstore.LoginInput) (appstore.LoginOutput, error),
+	trigger error,
 ) (appstore.Account, error) {
 	if account.Email == "" || account.Password == "" {
 		return appstore.Account{}, errors.New("saved Apple credentials are unavailable; sign in again")
 	}
 
-	fmt.Println("[GoBridge] Apple rejected the saved Store token; refreshing native authentication")
+	fmt.Printf("[GoBridge] %s; refreshing native authentication\n", nativeStoreRefreshReason(trigger))
 	loginResult, err := login(appstore.LoginInput{
 		Email:    account.Email,
 		Password: account.Password,

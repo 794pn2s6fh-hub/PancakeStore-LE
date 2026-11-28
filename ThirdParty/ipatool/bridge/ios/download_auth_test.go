@@ -102,3 +102,57 @@ func TestPurchaseWithNativeRefreshRetriesOnce(t *testing.T) {
 		t.Fatalf("attempts=%d final token=%q", attempts, finalAccount.PasswordToken)
 	}
 }
+
+func TestDownloadWithNativeRefreshRecoversAMDSynchronizationOnce(t *testing.T) {
+	account := appstore.Account{Email: "user@example.com", Password: "secret", PasswordToken: "old"}
+	refreshed := appstore.Account{Email: account.Email, Password: account.Password, PasswordToken: "new", DirectoryServicesID: "123", StoreFront: "143441-1,34"}
+	attempts, logins := 0, 0
+	output, finalAccount, err := downloadWithNativeRefresh(account,
+		func(current appstore.Account) (appstore.DownloadOutput, error) {
+			attempts++
+			if attempts == 1 {
+				return appstore.DownloadOutput{}, appstore.ErrStoreAMDSynchronizationRequired
+			}
+			if current.PasswordToken != "new" {
+				t.Fatalf("retry used password token %q, want refreshed token", current.PasswordToken)
+			}
+			return appstore.DownloadOutput{DestinationPath: "/tmp/example.ipa"}, nil
+		},
+		func(input appstore.LoginInput) (appstore.LoginOutput, error) {
+			logins++
+			return appstore.LoginOutput{Account: refreshed}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("downloadWithNativeRefresh returned error: %v", err)
+	}
+	if attempts != 2 || logins != 1 || finalAccount.PasswordToken != "new" {
+		t.Fatalf("attempts=%d logins=%d final token=%q; want 2, 1, new", attempts, logins, finalAccount.PasswordToken)
+	}
+	if output.DestinationPath != "/tmp/example.ipa" {
+		t.Fatalf("destination = %q", output.DestinationPath)
+	}
+}
+
+func TestDownloadWithNativeRefreshStopsAfterOneAMDSynchronizationRetry(t *testing.T) {
+	attempts, logins := 0, 0
+	_, _, err := downloadWithNativeRefresh(
+		appstore.Account{Email: "user@example.com", Password: "secret"},
+		func(appstore.Account) (appstore.DownloadOutput, error) {
+			attempts++
+			return appstore.DownloadOutput{}, appstore.ErrStoreAMDSynchronizationRequired
+		},
+		func(appstore.LoginInput) (appstore.LoginOutput, error) {
+			logins++
+			return appstore.LoginOutput{Account: appstore.Account{
+				PasswordToken: "fresh", DirectoryServicesID: "123", StoreFront: "143441-1,34",
+			}}, nil
+		},
+	)
+	if !errors.Is(err, appstore.ErrStoreAMDSynchronizationRequired) {
+		t.Fatalf("error = %v; want AMD synchronization error after retry", err)
+	}
+	if attempts != 2 || logins != 1 {
+		t.Fatalf("attempts = %d, logins = %d; want 2 and 1", attempts, logins)
+	}
+}
