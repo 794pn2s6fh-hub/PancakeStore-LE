@@ -59,6 +59,44 @@ var _ = Describe("AppStore (Download Product)", func() {
 		ctrl.Finish()
 	})
 
+	Describe("recovers AMD machine synchronization requests", func() {
+		It("returns a typed refresh signal for the X-Apple-AMD-Action response header", func() {
+			response := http.Result[downloadResult]{
+				StatusCode: gohttp.StatusOK,
+				Headers:    map[string]string{"X-Apple-AMD-Action": "SM"},
+				Data:       downloadResult{CustomerMessage: "request requires machine sync"},
+			}
+			mockDownloadClient.EXPECT().Send(gomock.Any()).Return(response, nil).Times(1)
+
+			got, err := store.sendCommerceDownloadRequest(context.Background(), http.Request{URL: "https://p42-buy.itunes.apple.com/download", Method: "POST"}, testGUID)
+			Expect(got).To(Equal(response))
+			Expect(errors.Is(err, ErrStoreAMDSynchronizationRequired)).To(BeTrue())
+		})
+
+		It("recognizes the exact AMD SM customer message when Apple omits the action header", func() {
+			response := http.Result[downloadResult]{
+				StatusCode: gohttp.StatusOK,
+				Data:       downloadResult{CustomerMessage: "AMD-Action:volumeStoreDownloadProduct:SM"},
+			}
+			mockDownloadClient.EXPECT().Send(gomock.Any()).Return(response, nil).Times(1)
+
+			got, err := store.sendCommerceDownloadRequest(context.Background(), http.Request{URL: "https://p42-buy.itunes.apple.com/download", Method: "POST"}, testGUID)
+			Expect(got).To(Equal(response))
+			Expect(errors.Is(err, ErrStoreAMDSynchronizationRequired)).To(BeTrue())
+		})
+
+		It("does not classify unrelated Store customer messages as AMD synchronization", func() {
+			response := http.Result[downloadResult]{
+				StatusCode: gohttp.StatusOK,
+				Data:       downloadResult{CustomerMessage: "This item is temporarily unavailable"},
+			}
+			mockDownloadClient.EXPECT().Send(gomock.Any()).Return(response, nil).Times(1)
+
+			_, err := store.sendCommerceDownloadRequest(context.Background(), http.Request{URL: "https://p42-buy.itunes.apple.com/download", Method: "POST"}, testGUID)
+			Expect(errors.Is(err, ErrStoreAMDSynchronizationRequired)).To(BeFalse())
+		})
+	})
+
 	Describe("retries transient Store commerce failures", func() {
 		It("retries an intermittent HTML 504 and succeeds", func() {
 			firstError := &http.UnexpectedResponseError{StatusCode: gohttp.StatusGatewayTimeout, Reason: "gateway timeout"}

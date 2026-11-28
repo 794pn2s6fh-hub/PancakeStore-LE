@@ -8,7 +8,14 @@ import (
 	"strings"
 
 	"github.com/majd/ipatool/v2/internal/storeauth"
+	"github.com/majd/ipatool/v2/pkg/http"
 )
+
+// ErrStoreAMDSynchronizationRequired indicates Apple rejected the current
+// Store machine state and asked the client to synchronize it before retrying.
+// The native bridge can recover from this response by refreshing its Store
+// authentication once, matching the app's existing manual sign-in recovery.
+var ErrStoreAMDSynchronizationRequired = errors.New("Apple requires Store AMD machine synchronization")
 
 func (t *appstore) storeAMDProof(ctx context.Context, endpoint string, hardwareID []byte) (map[string]string, error) {
 	if ctx == nil {
@@ -109,4 +116,30 @@ func isStoreBuyHost(host string) bool {
 	}
 
 	return true
+}
+
+func storeAMDSynchronizationAction(res http.Result[downloadResult]) bool {
+	for key, value := range res.Headers {
+		if strings.EqualFold(key, "X-Apple-AMD-Action") && isStoreAMDSynchronizationAction(value) {
+			return true
+		}
+	}
+
+	return isStoreAMDSynchronizationAction(res.Data.CustomerMessage)
+}
+
+func isStoreAMDSynchronizationAction(value string) bool {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "SM") || strings.EqualFold(value, "volumeStoreDownloadProduct:SM") {
+		return true
+	}
+
+	// Some Store responses expose the action in customerMessage instead of
+	// the dedicated response header. Accept only Apple's exact action token;
+	// unrelated messages containing the letters "SM" must not trigger login.
+	parts := strings.Split(value, ":")
+	return len(parts) == 3 &&
+		strings.EqualFold(strings.TrimSpace(parts[0]), "AMD-Action") &&
+		strings.EqualFold(strings.TrimSpace(parts[1]), "volumeStoreDownloadProduct") &&
+		strings.EqualFold(strings.TrimSpace(parts[2]), "SM")
 }

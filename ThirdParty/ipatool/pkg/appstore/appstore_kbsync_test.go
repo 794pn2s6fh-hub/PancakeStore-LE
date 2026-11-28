@@ -84,6 +84,21 @@ var _ = Describe("AppStore (preferred kbsync download)", func() {
 		Expect(generated).To(Equal(1))
 	})
 
+	It("does not hide an AMD synchronization request behind the volumeStore fallback", func() {
+		amdRequired := http.Result[downloadResult]{
+			StatusCode: gohttp.StatusOK,
+			Data:       downloadResult{CustomerMessage: "AMD-Action:volumeStoreDownloadProduct:SM"},
+		}
+		gomock.InOrder(
+			bags.EXPECT().Send(gomock.Any()).Return(http.Result[bagResult]{StatusCode: gohttp.StatusOK, Data: bag}, nil),
+			downloads.EXPECT().Send(gomock.Any()).Return(amdRequired, nil),
+		)
+
+		_, _, err := store.sendDownloadProduct(context.Background(), account, app, guid, versionID, PlatformIPhone)
+		Expect(errors.Is(err, ErrStoreAMDSynchronizationRequired)).To(BeTrue())
+		Expect(generated).To(Equal(1))
+	})
+
 	It("enables kbsync generation for normal clients", func() {
 		Expect(NewAppStore(Args{}).(*appstore).kbsyncGenerator).NotTo(BeNil())
 	})

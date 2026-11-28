@@ -150,6 +150,12 @@ func (t *appstore) sendEntDownloadRequest(ctx context.Context, endpoint download
 	if err != nil {
 		return res, fmt.Errorf("send ent/download request: %w", err)
 	}
+	if storeAMDSynchronizationAction(res) {
+		return res, NewErrorWithMetadata(
+			fmt.Errorf("%w: Apple rejected the saved Store machine state", ErrStoreAMDSynchronizationRequired),
+			res,
+		)
+	}
 
 	res.Data = normalizeDownloadFailure(res.Data)
 

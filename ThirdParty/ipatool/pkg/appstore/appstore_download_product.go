@@ -56,8 +56,8 @@ func (t *appstore) sendDownloadProduct(ctx context.Context, acc Account, app App
 			bag = &fetched
 			if bag.EntDownloadEndpoint != "" {
 				res, resolvedPlatform, err := t.sendPreferredDownload(ctx, bag.EntDownloadEndpoint, acc, app, guid, externalVersionID, platform)
-				if err == nil {
-					return res, resolvedPlatform, nil
+				if err == nil || errors.Is(err, ErrStoreAMDSynchronizationRequired) {
+					return res, resolvedPlatform, err
 				}
 			}
 		}
@@ -161,6 +161,10 @@ func (t *appstore) sendDelistedDownload(ctx context.Context, redownload download
 	// Bypass catalog discovery: it already confirmed that there is no offer.
 	// Download still checks the returned package's platform before publishing it.
 	entRes, entErr := t.sendEntDownload(ctx, endpoint, acc, app, guid, "")
+	if errors.Is(entErr, ErrStoreAMDSynchronizationRequired) {
+		return entRes, entErr
+	}
+
 	if entErr == nil || entRes.Data.FailureType == FailureTypePasswordTokenExpired ||
 		entRes.Data.FailureType == FailureTypeLicenseNotFound {
 		return entRes, nil
@@ -303,6 +307,12 @@ func (t *appstore) sendCommerceDownloadRequest(ctx context.Context, request http
 
 		result, err := t.downloadClient.Send(attemptRequest)
 		lastResult = result
+		if err == nil && storeAMDSynchronizationAction(result) {
+			return result, NewErrorWithMetadata(
+				fmt.Errorf("%w: Apple rejected the saved Store machine state", ErrStoreAMDSynchronizationRequired),
+				result,
+			)
+		}
 		if err == nil && isRetryableCommerceStatus(result.StatusCode) {
 			err = commerceHTTPStatusError(result)
 		}
